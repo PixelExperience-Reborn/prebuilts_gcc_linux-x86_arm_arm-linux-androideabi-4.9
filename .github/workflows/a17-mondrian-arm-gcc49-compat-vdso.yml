@@ -1,0 +1,74 @@
+name: AOSP17 historical ARM GCC49 and mondrian compat-vDSO gate
+on:
+  push:
+    branches:
+      - audit/a17-mondrian-arm-gcc49-compat-vdso-20261108
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  archive-and-kernel-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: |
+            repo.prop
+            tests
+            docs
+            .github
+      - name: Validate modern AOSP17 source graph and 135 repository inventory
+        run: |
+          set -euo pipefail
+          git init -q "$RUNNER_TEMP/a17-manifest"
+          git -C "$RUNNER_TEMP/a17-manifest" remote add origin \
+            https://github.com/PixelExperience-Reborn/manifest.git
+          git -C "$RUNNER_TEMP/a17-manifest" fetch -q --depth 1 origin \
+            5e8b000df681b4fc33516a64ad85e989f3ce4f4b
+          git -C "$RUNNER_TEMP/a17-manifest" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/a17-manifest" rev-parse HEAD)" = \
+            "5e8b000df681b4fc33516a64ad85e989f3ce4f4b"
+          python3 "$RUNNER_TEMP/a17-manifest/tools/validate_aosp17_base_profiles.py"
+          python3 -m unittest discover -s "$RUNNER_TEMP/a17-manifest/tools" \
+            -p test_aosp17_manifest_entrypoint.py -v
+          python3 "$RUNNER_TEMP/a17-manifest/tools/validate_135_repository_matrix.py"
+      - name: Fetch pinned textual Soong, kernel and device reference files
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a17-audit-inputs"
+          fetch_pin() {
+            curl --fail --location --silent --show-error --retry 3 "$1" --output "$2"
+            test -s "$2"
+          }
+          fetch_pin \
+            "https://raw.githubusercontent.com/PixelExperience-Reborn/build_soong/6215d41c790a463b7795ce81ac77204c238cbf48/cc/config/global.go" \
+            "$RUNNER_TEMP/a17-audit-inputs/soong-global.go"
+          base="https://raw.githubusercontent.com/LF52406/android_kernel_xiaomi_sm8450/283772ceb84491fd446e340fd211d45fb9dd9a36"
+          fetch_pin "$base/arch/arm64/kernel/vdso32/Makefile" \
+            "$RUNNER_TEMP/a17-audit-inputs/vdso32-Makefile"
+          fetch_pin "$base/arch/arm64/Kconfig" \
+            "$RUNNER_TEMP/a17-audit-inputs/arm64-Kconfig"
+          fetch_pin "$base/arch/arm64/configs/gki_defconfig" \
+            "$RUNNER_TEMP/a17-audit-inputs/gki_defconfig"
+          fetch_pin \
+            "https://raw.githubusercontent.com/LF52406/mondrian_android_device_xiaomi_sm8450-common/6e0022f5100e09ac97980095b6ed8528f4ff823f/BoardConfigCommon.mk" \
+            "$RUNNER_TEMP/a17-audit-inputs/BoardConfigCommon.mk"
+      - name: Verify archive Git object IDs, AOSP17 toolchain and actual SM8475 vdso32 sources
+        run: |
+          set -euo pipefail
+          PE_AOSP17_REFERENCE="$RUNNER_TEMP/a17-manifest/aosp17_reference.xml" \
+          PE_AOSP17_DEFAULT="$RUNNER_TEMP/a17-manifest/default.xml" \
+          PE_AOSP17_SOONG_GLOBAL="$RUNNER_TEMP/a17-audit-inputs/soong-global.go" \
+          PE_KERNEL_VDSO32="$RUNNER_TEMP/a17-audit-inputs/vdso32-Makefile" \
+          PE_KERNEL_ARM64_KCONFIG="$RUNNER_TEMP/a17-audit-inputs/arm64-Kconfig" \
+          PE_KERNEL_GKI_DEFCONFIG="$RUNNER_TEMP/a17-audit-inputs/gki_defconfig" \
+          PE_MONDRIAN_BOARD_CONFIG="$RUNNER_TEMP/a17-audit-inputs/BoardConfigCommon.mk" \
+            python3 tests/test_aosp17_arm_gcc49_vdso_boundary.py
+      - name: Scope
+        run: |
+          echo "Historical GCC4.9 binaries were NOT checked out or executed."
+          echo "Host/source checks only; Android17 Soong, kernel/vdso ELF and real mondrian boot not tested."
