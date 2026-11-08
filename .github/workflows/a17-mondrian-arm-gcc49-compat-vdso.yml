@@ -24,8 +24,14 @@ jobs:
       - name: Validate modern AOSP17 source graph and 135 repository inventory
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch port/a17-aosp17-manifest-20261102 \
-            https://github.com/PixelExperience-Reborn/manifest.git "$RUNNER_TEMP/a17-manifest"
+          git init -q "$RUNNER_TEMP/a17-manifest"
+          git -C "$RUNNER_TEMP/a17-manifest" remote add origin \
+            https://github.com/PixelExperience-Reborn/manifest.git
+          git -C "$RUNNER_TEMP/a17-manifest" fetch -q --depth 1 origin \
+            5e8b000df681b4fc33516a64ad85e989f3ce4f4b
+          git -C "$RUNNER_TEMP/a17-manifest" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/a17-manifest" rev-parse HEAD)" = \
+            "5e8b000df681b4fc33516a64ad85e989f3ce4f4b"
           python3 "$RUNNER_TEMP/a17-manifest/tools/validate_aosp17_base_profiles.py"
           python3 -m unittest discover -s "$RUNNER_TEMP/a17-manifest/tools" \
             -p test_aosp17_manifest_entrypoint.py -v
